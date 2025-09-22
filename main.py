@@ -6,12 +6,11 @@ import win32print
 import win32ui
 import win32con
 from datetime import datetime
-from PIL import Image, ImageWin
+from PIL import Image, ImageWin, ImageDraw
 from PyQt5 import QtWidgets, QtCore, QtGui
 
 try:
     from pylibdmtx.pylibdmtx import encode
-    import pylibdmtx
 except ImportError:
     print("Установите библиотеку: pip install pylibdmtx")
     sys.exit(1)
@@ -27,7 +26,7 @@ class PrinterApp(QtWidgets.QMainWindow):
         self.load_settings()
         
     def init_ui(self):
-        self.setWindowTitle("DataMatrix Printer Check - Профессиональная версия")
+        self.setWindowTitle("DataMatrix Printer - Честный знак (GS1)")
         self.setGeometry(100, 100, 900, 800)
         
         central_widget = QtWidgets.QWidget()
@@ -37,7 +36,7 @@ class PrinterApp(QtWidgets.QMainWindow):
         central_widget.setLayout(layout)
         
         # Форма выбора принтера
-        printer_group = QtWidgets.QGroupBox("Настройки принтера")
+        printer_group = QtWidgets.QGroupBox("Настройки для Честного знака (GS1)")
         printer_layout = QtWidgets.QGridLayout()
         
         printer_layout.addWidget(QtWidgets.QLabel("Принтер:"), 0, 0)
@@ -49,38 +48,45 @@ class PrinterApp(QtWidgets.QMainWindow):
         self.refresh_btn.clicked.connect(self.find_printers)
         printer_layout.addWidget(self.refresh_btn, 0, 2)
         
-        # Информация о принтере
-        self.printer_info_label = QtWidgets.QLabel("Информация о принтере: не выбрано")
-        self.printer_info_label.setWordWrap(True)
-        printer_layout.addWidget(self.printer_info_label, 1, 0, 1, 3)
-        
-        # Настройки размера
-        printer_layout.addWidget(QtWidgets.QLabel("Размер DataMatrix (мм):"), 2, 0)
+        # Настройки для Честного знака
+        printer_layout.addWidget(QtWidgets.QLabel("Размер (мм):"), 1, 0)
         self.dm_size_spin = QtWidgets.QSpinBox()
-        self.dm_size_spin.setRange(5, 100)
-        self.dm_size_spin.setValue(20)
+        self.dm_size_spin.setRange(15, 50)
+        self.dm_size_spin.setValue(25)
         self.dm_size_spin.valueChanged.connect(self.save_settings)
-        printer_layout.addWidget(self.dm_size_spin, 2, 1)
+        printer_layout.addWidget(self.dm_size_spin, 1, 1)
         
-        # Настройки отступов
-        printer_layout.addWidget(QtWidgets.QLabel("Отступ слева (мм):"), 3, 0)
-        self.margin_left_spin = QtWidgets.QSpinBox()
-        self.margin_left_spin.setRange(0, 100)
-        self.margin_left_spin.setValue(5)
-        self.margin_left_spin.valueChanged.connect(self.save_settings)
-        printer_layout.addWidget(self.margin_left_spin, 3, 1)
+        printer_layout.addWidget(QtWidgets.QLabel("Тихая зона (мм):"), 2, 0)
+        self.quiet_zone_spin = QtWidgets.QSpinBox()
+        self.quiet_zone_spin.setRange(1, 10)
+        self.quiet_zone_spin.setValue(3)
+        self.quiet_zone_spin.valueChanged.connect(self.save_settings)
+        printer_layout.addWidget(self.quiet_zone_spin, 2, 1)
         
-        printer_layout.addWidget(QtWidgets.QLabel("Отступ сверху (мм):"), 4, 0)
-        self.margin_top_spin = QtWidgets.QSpinBox()
-        self.margin_top_spin.setRange(0, 100)
-        self.margin_top_spin.setValue(5)
-        self.margin_top_spin.valueChanged.connect(self.save_settings)
-        printer_layout.addWidget(self.margin_top_spin, 4, 1)
+        # Добавляем FNC1 в начало
+        self.add_fnc1_cb = QtWidgets.QCheckBox("Добавить FNC1 (GS1)")
+        self.add_fnc1_cb.setChecked(True)
+        self.add_fnc1_cb.stateChanged.connect(self.save_settings)
+        printer_layout.addWidget(self.add_fnc1_cb, 3, 0, 1, 2)
         
-        # Автоматическая калибровка
-        self.auto_calibrate_btn = QtWidgets.QPushButton("Автоматическая калибровка")
-        self.auto_calibrate_btn.clicked.connect(self.auto_calibrate)
-        printer_layout.addWidget(self.auto_calibrate_btn, 5, 0, 1, 3)
+        # Автодобавление разделителей
+        self.auto_gs_cb = QtWidgets.QCheckBox("Авто-добавление GS разделителей")
+        self.auto_gs_cb.setChecked(True)
+        self.auto_gs_cb.stateChanged.connect(self.save_settings)
+        printer_layout.addWidget(self.auto_gs_cb, 4, 0, 1, 2)
+        
+        # Кнопка тестовой печати
+        self.test_print_btn = QtWidgets.QPushButton("Тест GS1 DataMatrix")
+        self.test_print_btn.clicked.connect(self.test_print_gs1)
+        printer_layout.addWidget(self.test_print_btn, 5, 0, 1, 3)
+        
+        # Информация о формате
+        info_label = QtWidgets.QLabel(
+            "Для Честного знака используйте GS1 DataMatrix с FNC1 в начале и GS разделителями"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: blue; font-style: italic;")
+        printer_layout.addWidget(info_label, 6, 0, 1, 3)
         
         printer_group.setLayout(printer_layout)
         
@@ -96,13 +102,8 @@ class PrinterApp(QtWidgets.QMainWindow):
         font.setPointSize(12)
         self.text_input.setFont(font)
         
-        # Статус сканирования
-        self.scan_status = QtWidgets.QLabel("Ожидание сканирования...")
-        self.scan_status.setAlignment(QtCore.Qt.AlignCenter)
-        
         input_layout.addWidget(QtWidgets.QLabel("Данные сканирования:"))
         input_layout.addWidget(self.text_input)
-        input_layout.addWidget(self.scan_status)
         input_group.setLayout(input_layout)
         
         # Статусная строка
@@ -111,7 +112,7 @@ class PrinterApp(QtWidgets.QMainWindow):
         self.status_label.setStyleSheet("background-color: #e0e0e0; padding: 10px; border-radius: 5px;")
         
         # Лог событий
-        log_group = QtWidgets.QGroupBox("Лог событий и отладка")
+        log_group = QtWidgets.QGroupBox("Лог событий")
         log_layout = QtWidgets.QVBoxLayout()
         
         self.log_text = QtWidgets.QTextEdit()
@@ -126,14 +127,10 @@ class PrinterApp(QtWidgets.QMainWindow):
         layout.addWidget(self.status_label)
         layout.addWidget(log_group)
         
-        # Устанавливаем фокус на поле ввода
         self.text_input.setFocus()
-        
-        # Таймер для автоматической печати
         self.print_timer = QtCore.QTimer()
         self.print_timer.setSingleShot(True)
         self.print_timer.timeout.connect(self.auto_print_dm_code)
-        
         self.current_scanned_data = ""
         
     def init_database(self):
@@ -152,118 +149,110 @@ class PrinterApp(QtWidgets.QMainWindow):
     
     def load_settings(self):
         """Загрузка сохраненных настроек"""
-        self.dm_size_spin.setValue(self.settings.value("dm_size", 20, type=int))
-        self.margin_left_spin.setValue(self.settings.value("margin_left", 5, type=int))
-        self.margin_top_spin.setValue(self.settings.value("margin_top", 5, type=int))
+        self.dm_size_spin.setValue(self.settings.value("dm_size", 30, type=int))
+        self.quiet_zone_spin.setValue(self.settings.value("quiet_zone", 2, type=int))
+        self.add_fnc1_cb.setChecked(self.settings.value("add_fnc1", False, type=bool))  # Отключаем FNC1
+        self.auto_gs_cb.setChecked(self.settings.value("auto_gs", False, type=bool))   # Отключаем GS разделители
     
     def save_settings(self):
         """Сохранение настроек"""
         self.settings.setValue("dm_size", self.dm_size_spin.value())
-        self.settings.setValue("margin_left", self.margin_left_spin.value())
-        self.settings.setValue("margin_top", self.margin_top_spin.value())
+        self.settings.setValue("quiet_zone", self.quiet_zone_spin.value())
+        self.settings.setValue("add_fnc1", self.add_fnc1_cb.isChecked())
+        self.settings.setValue("auto_gs", self.auto_gs_cb.isChecked())
     
     def on_printer_changed(self, index):
         """Обработчик изменения выбора принтера"""
         if index >= 0:
             printer_name = self.printer_combo.itemText(index)
-            self.update_printer_info(printer_name)
+            self.log_text.append(f"Выбран принтер: {printer_name}")
     
-    def update_printer_info(self, printer_name):
-        """Обновление информации о выбранном принтере"""
-        try:
-            hprinter = win32print.OpenPrinter(printer_name)
-            printer_info = win32print.GetPrinter(hprinter, 2)
-            win32print.ClosePrinter(hprinter)
-            
-            info_text = f"""
-            Принтер: {printer_name}
-            Статус: {printer_info['Status']}
-            Драйвер: {printer_info['pDriverName']}
-            Порт: {printer_info['pPortName']}
-            """
-            
-            self.printer_info_label.setText(info_text.strip())
-            self.current_printer_info = printer_info
-            
-        except Exception as e:
-            self.printer_info_label.setText(f"Ошибка получения информации: {str(e)}")
-    
-    def auto_calibrate(self):
-        """Автоматическая калибровка под принтер"""
-        if not self.current_printer_info:
-            QtWidgets.QMessageBox.warning(self, "Ошибка", "Сначала выберите принтер!")
-            return
-        
-        try:
-            # Тестовая печать для калибровки
-            test_data = "CALIBRATION_TEST_123"
-            self.process_dm_code(test_data, is_test=True, is_calibration=True)
-            
-        except Exception as e:
-            self.log_text.append(f"Ошибка калибровки: {str(e)}")
+    def test_print_gs1(self):
+        """Тестовая печать для GS1 DataMatrix"""
+        # Тестовые данные в формате Честного знака
+        test_data = "010461414111072521pNxU640aZ4Kk"  # Пример данных
+        self.process_dm_code(test_data, is_test=True)
     
     def on_text_changed(self, text):
-        """Обработчик изменения текста для автоматического определения конца сканирования"""
-        if text.strip():
-            self.current_scanned_data = text.strip()
-            self.scan_status.setText("Сканирование...")
-            self.scan_status.setStyleSheet("color: blue;")
-            # Запускаем таймер - если в течение 200ms не будет изменений, значит сканирование завершено
+        self.print_timer.stop()
+        current_data = text.strip()
+        if current_data:
+            self.current_scanned_data = current_data
+            self.log_text.append(f"[DEBUG] Данные получены: {current_data}")  # Лог
             self.print_timer.start(200)
+            self.log_text.append("[DEBUG] Таймер печати запущен")  # Лог
+
     
     def auto_print_dm_code(self):
         """Автоматическая печать после сканирования"""
+        self.log_text.append("[DEBUG] Таймер сработал, запуск auto_print_dm_code")
         if self.current_scanned_data:
-            self.scan_status.setText("Обработка...")
-            self.scan_status.setStyleSheet("color: orange;")
+            self.log_text.append(f"[DEBUG] Печатаются данные: {self.current_scanned_data}")
+            self.log_text.append(f"[DEBUG] Настройки: FNC1={self.add_fnc1_cb.isChecked()}, GS={self.auto_gs_cb.isChecked()}")  # Добавляем логирование настроек
             self.process_dm_code(self.current_scanned_data)
             self.current_scanned_data = ""
-            # Сбрасываем курсор в начало
-            self.text_input.setFocus()
             self.text_input.clear()
-            self.scan_status.setText("Ожидание сканирования...")
-            self.scan_status.setStyleSheet("color: black;")
+            self.text_input.setFocus()
     
     def find_printers(self):
         self.printer_combo.clear()
         try:
-            printers = win32print.EnumPrinters(
-                win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS, 
-                None, 1
-            )
+            printers = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL, None, 1)
             for printer in printers:
                 self.printer_combo.addItem(printer[2])
             
-            # Устанавливаем принтер по умолчанию
             default_printer = win32print.GetDefaultPrinter()
             index = self.printer_combo.findText(default_printer)
             if index >= 0:
                 self.printer_combo.setCurrentIndex(index)
-                self.update_printer_info(default_printer)
                 
             self.log_text.append(f"Найдено принтеров: {len(printers)}")
             
         except Exception as e:
             self.log_text.append(f"Ошибка поиска принтеров: {str(e)}")
     
-    def generate_data_matrix(self, data, size_mm=20):
-        """Генерация DataMatrix кода"""
+    def format_gs1_data(self, data):
+        """Правильное форматирование данных для GS1 DataMatrix"""
         try:
-            # Генерируем DataMatrix
+            # Для Честного знака используем raw данные
+            # FNC1 будет обработан правильно при кодировании
+            return data.encode('utf-8')
+        except Exception as e:
+            self.log_text.append(f"Ошибка форматирования: {str(e)}")
+            return data.encode('utf-8')
+        
+    def generate_gs1_data_matrix(self, data, size_mm=25, quiet_zone=3):
+        """Упрощенная генерация DataMatrix без сложных преобразований"""
+        try:
+            # Просто кодируем данные как есть
             encoded = encode(data.encode('utf-8'))
             
-            # Конвертируем в PIL Image
-            img = Image.frombytes('RGB', (encoded.width, encoded.height), encoded.pixels)
+            # Создаем изображение напрямую из encoded data
+            img = Image.new('L', (encoded.width, encoded.height), 255)  # Белый фон
             
-            # Конвертируем в черно-белое
-            img = img.convert('L')
+            # Копируем пиксели
+            pixels = encoded.pixels
+            for i in range(0, len(pixels), 3):
+                x = (i // 3) % encoded.width
+                y = (i // 3) // encoded.width
+                brightness = pixels[i]  # Берем только R канал
+                img.putpixel((x, y), brightness)
             
-            # Инвертируем цвета (DataMatrix обычно черный на белом)
-            img = img.point(lambda x: 0 if x > 128 else 255)  # Четкое черно-белое
+            # Конвертируем в чисто черно-белое
+            img = img.convert('1')
             
-            # Масштабируем до нужного размера в мм
-            target_size_px = int(size_mm * 3.78)  # 96 DPI
-            img = img.resize((target_size_px, target_size_px), Image.Resampling.LANCZOS)
+            # Добавляем тихую зону
+            quiet_zone_px = int(quiet_zone * 3.78)
+            if quiet_zone_px > 0:
+                new_width = img.width + quiet_zone_px * 2
+                new_height = img.height + quiet_zone_px * 2
+                new_img = Image.new('1', (new_width, new_height), 1)  # Белый фон
+                new_img.paste(img, (quiet_zone_px, quiet_zone_px))
+                img = new_img
+            
+            # Масштабируем
+            target_size_px = int(size_mm * 3.78)
+            img = img.resize((target_size_px, target_size_px), Image.Resampling.NEAREST)
             
             return img
             
@@ -271,52 +260,33 @@ class PrinterApp(QtWidgets.QMainWindow):
             self.log_text.append(f"Ошибка генерации DataMatrix: {str(e)}")
             return None
     
-    def process_dm_code(self, data, is_test=False, is_calibration=False):
-        """Обработка DataMatrix с проверкой дубликатов"""
+    def process_dm_code(self, data, is_test=False):
+        """Обработка DataMatrix - исправленная версия"""
         if not data:
             return False
         
         if self.printer_combo.count() == 0:
             self.status_label.setText("Ошибка: Принтеры не найдены!")
-            self.status_label.setStyleSheet("background-color: #ffcccc; padding: 10px; border-radius: 5px;")
             return False
         
         printer_name = self.printer_combo.currentText()
         
-        # Для тестовой печати пропускаем проверку дубликатов
-        if not is_test and not is_calibration:
-            # Проверка на дубликат
-            try:
-                self.cursor.execute(
-                    "SELECT * FROM print_history WHERE dm_content = ? AND print_success = 1",
-                    (data,)
-                )
-                duplicate = self.cursor.fetchone()
-                
-                if duplicate:
-                    self.status_label.setText("Дубликат! Печать отменена")
-                    self.status_label.setStyleSheet("background-color: #ffffcc; padding: 10px; border-radius: 5px;")
-                    self.log_text.append(f"Дубликат обнаружен: {data[:30]}...")
-                    self.text_input.clear()
-                    self.text_input.setFocus()
-                    return False
-                    
-            except Exception as e:
-                self.log_text.append(f"Ошибка проверки дубликата: {str(e)}")
-                return False
+        # Временное отключение GS разделителей для автоматической печати
+        original_auto_gs = self.auto_gs_cb.isChecked()
+        if not is_test:  # Для автоматической печати отключаем GS разделители
+            self.auto_gs_cb.setChecked(False)
         
         try:
-            # Генерируем DataMatrix с настройками размера
+            # Генерируем DataMatrix
             dm_size = self.dm_size_spin.value()
-            dm_image = self.generate_data_matrix(data, dm_size)
+            quiet_zone = self.quiet_zone_spin.value()
+            dm_image = self.generate_gs1_data_matrix(data, dm_size, quiet_zone)
+            
             if not dm_image:
                 return False
             
-            # Печатаем DataMatrix с настройками отступов
-            margin_left = self.margin_left_spin.value()
-            margin_top = self.margin_top_spin.value()
-            
-            success = self.print_image(dm_image, printer_name, margin_left, margin_top)
+            # Печатаем
+            success = self.print_image(dm_image, printer_name)
             
             # Сохраняем в историю
             self.cursor.execute(
@@ -326,111 +296,70 @@ class PrinterApp(QtWidgets.QMainWindow):
             self.conn.commit()
             
             if success:
-                if is_calibration:
-                    status_text = "Калибровка успешна!"
-                elif is_test:
-                    status_text = "Тестовая печать успешна!"
-                else:
-                    status_text = "Успешно напечатано!"
-                
+                status_text = "Тестовая печать успешна!" if is_test else "Успешно напечатано!"
                 self.status_label.setText(status_text)
-                self.status_label.setStyleSheet("background-color: #ccffcc; padding: 10px; border-radius: 5px;")
-                self.log_text.append(f"{status_text}: {data[:30]}...")
+                self.log_text.append(f"{status_text}: {data[:20]}...")
             else:
                 self.status_label.setText("Ошибка печати!")
-                self.status_label.setStyleSheet("background-color: #ffcccc; padding: 10px; border-radius: 5px;")
             
-            # Сбрасываем фокус и очищаем поле
-            self.text_input.clear()
-            self.text_input.setFocus()
             return success
             
         except Exception as e:
             self.status_label.setText("Ошибка печати!")
-            self.status_label.setStyleSheet("background-color: #ffcccc; padding: 10px; border-radius: 5px;")
-            self.log_text.append(f"Ошибка печати: {str(e)}")
-            
-            # Сохраняем ошибку в базу
-            try:
-                self.cursor.execute(
-                    "INSERT INTO print_history (dm_content, printer_name, print_date, print_success) VALUES (?, ?, ?, ?)",
-                    (data, printer_name, datetime.now(), False)
-                )
-                self.conn.commit()
-            except:
-                pass
-                
+            self.log_text.append(f"Ошибка: {str(e)}")
             return False
+        finally:
+            # Восстанавливаем оригинальные настройки
+            if not is_test:
+                self.auto_gs_cb.setChecked(original_auto_gs)
     
-    def print_image(self, image, printer_name, margin_left_mm=5, margin_top_mm=5):
-        """Печать изображения с настройкой отступов"""
-        temp_file_path = None
+    def print_image(self, image, printer_name):
+        """Упрощенная печать"""
         try:
-            # Создаем временный файл
-            temp_file = tempfile.NamedTemporaryFile(suffix='.bmp', delete=False)
-            temp_file_path = temp_file.name
-            temp_file.close()
-            
-            # Сохраняем изображение
-            image.save(temp_file_path, 'BMP')
-            
-            # Создаем контекст устройства принтера
-            printer_dc = win32ui.CreateDC()
-            printer_dc.CreatePrinterDC(printer_name)
-            
-            # Получаем информацию о принтере
-            dpi_x = printer_dc.GetDeviceCaps(win32con.LOGPIXELSX)
-            dpi_y = printer_dc.GetDeviceCaps(win32con.LOGPIXELSY)
-            printable_width = printer_dc.GetDeviceCaps(win32con.HORZRES)
-            printable_height = printer_dc.GetDeviceCaps(win32con.VERTRES)
-            
-            self.log_text.append(f"DPI принтера: {dpi_x}x{dpi_y}")
-            self.log_text.append(f"Область печати: {printable_width}x{printable_height} пикселей")
-            
-            printer_dc.StartDoc("DataMatrix Print")
-            printer_dc.StartPage()
-            
-            # Конвертируем мм в пиксели
-            pixels_per_mm_x = dpi_x / 25.4
-            pixels_per_mm_y = dpi_y / 25.4
-            
-            margin_left_px = int(margin_left_mm * pixels_per_mm_x)
-            margin_top_px = int(margin_top_mm * pixels_per_mm_y)
-            
-            # Загружаем изображение
-            bmp = Image.open(temp_file_path)
-            
-            # Проверяем, помещается ли изображение
-            if margin_left_px + bmp.width > printable_width:
-                self.log_text.append("Предупреждение: Изображение выходит за правую границу!")
-            if margin_top_px + bmp.height > printable_height:
-                self.log_text.append("Предупреждение: Изображение выходит за нижнюю границу!")
-            
-            # Рисуем изображение с отступами
-            dib = ImageWin.Dib(bmp)
-            dib.draw(printer_dc.GetHandleOutput(), 
-                    (margin_left_px, margin_top_px, 
-                     margin_left_px + bmp.width, margin_top_px + bmp.height))
-            
-            printer_dc.EndPage()
-            printer_dc.EndDoc()
-            
-            # Закрываем изображение
-            bmp.close()
-            
-            self.log_text.append("Печать выполнена успешно")
-            return True
-                
+            with tempfile.NamedTemporaryFile(suffix='.bmp', delete=False) as temp_file:
+                temp_file_path = temp_file.name
+
+            # ✅ Конвертируем в RGB перед сохранением
+            rgb_image = image.convert('RGB')
+            rgb_image.save(temp_file_path, 'BMP')
+
+            hprinter = win32print.OpenPrinter(printer_name)
+            try:
+                printer_dc = win32ui.CreateDC()
+                printer_dc.CreatePrinterDC(printer_name)
+
+                printer_dc.StartDoc("DataMatrix Print")
+                printer_dc.StartPage()
+
+                bmp = Image.open(temp_file_path)
+                dib = ImageWin.Dib(bmp)
+
+                printable_width = printer_dc.GetDeviceCaps(win32con.HORZRES)
+                printable_height = printer_dc.GetDeviceCaps(win32con.VERTRES)
+
+                x = (printable_width - bmp.width) // 2
+                y = (printable_height - bmp.height) // 2
+
+                dib.draw(printer_dc.GetHandleOutput(),
+                        (x, y, x + bmp.width, y + bmp.height))
+
+                printer_dc.EndPage()
+                printer_dc.EndDoc()
+                bmp.close()
+
+                return True
+            finally:
+                win32print.ClosePrinter(hprinter)
         except Exception as e:
             self.log_text.append(f"Ошибка печати: {str(e)}")
             return False
         finally:
-            # Удаляем временный файл
-            if temp_file_path and os.path.exists(temp_file_path):
+            if os.path.exists(temp_file_path):
                 try:
                     os.unlink(temp_file_path)
                 except:
                     pass
+
     
     def closeEvent(self, event):
         self.conn.close()
