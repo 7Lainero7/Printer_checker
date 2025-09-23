@@ -6,8 +6,8 @@ import win32print
 import win32ui
 import win32con
 from datetime import datetime
-from PIL import Image, ImageWin, ImageDraw
-from PyQt5 import QtWidgets, QtCore, QtGui
+from PIL import Image, ImageWin
+from PyQt5 import QtWidgets, QtCore
 
 try:
     from pylibdmtx.pylibdmtx import encode
@@ -36,7 +36,7 @@ class PrinterApp(QtWidgets.QMainWindow):
         central_widget.setLayout(layout)
         
         # Форма выбора принтера
-        printer_group = QtWidgets.QGroupBox("Настройки для Честного знака (GS1)")
+        printer_group = QtWidgets.QGroupBox("Настройки печати")
         printer_layout = QtWidgets.QGridLayout()
         
         printer_layout.addWidget(QtWidgets.QLabel("Принтер:"), 0, 0)
@@ -48,11 +48,11 @@ class PrinterApp(QtWidgets.QMainWindow):
         self.refresh_btn.clicked.connect(self.find_printers)
         printer_layout.addWidget(self.refresh_btn, 0, 2)
         
-        # Настройки для Честного знака
+        # Настройки размера
         printer_layout.addWidget(QtWidgets.QLabel("Размер (мм):"), 1, 0)
         self.dm_size_spin = QtWidgets.QSpinBox()
         self.dm_size_spin.setRange(15, 50)
-        self.dm_size_spin.setValue(25)
+        self.dm_size_spin.setValue(30)
         self.dm_size_spin.valueChanged.connect(self.save_settings)
         printer_layout.addWidget(self.dm_size_spin, 1, 1)
         
@@ -63,30 +63,10 @@ class PrinterApp(QtWidgets.QMainWindow):
         self.quiet_zone_spin.valueChanged.connect(self.save_settings)
         printer_layout.addWidget(self.quiet_zone_spin, 2, 1)
         
-        # Добавляем FNC1 в начало
-        self.add_fnc1_cb = QtWidgets.QCheckBox("Добавить FNC1 (GS1)")
-        self.add_fnc1_cb.setChecked(True)
-        self.add_fnc1_cb.stateChanged.connect(self.save_settings)
-        printer_layout.addWidget(self.add_fnc1_cb, 3, 0, 1, 2)
-        
-        # Автодобавление разделителей
-        self.auto_gs_cb = QtWidgets.QCheckBox("Авто-добавление GS разделителей")
-        self.auto_gs_cb.setChecked(True)
-        self.auto_gs_cb.stateChanged.connect(self.save_settings)
-        printer_layout.addWidget(self.auto_gs_cb, 4, 0, 1, 2)
-        
         # Кнопка тестовой печати
-        self.test_print_btn = QtWidgets.QPushButton("Тест GS1 DataMatrix")
-        self.test_print_btn.clicked.connect(self.test_print_gs1)
-        printer_layout.addWidget(self.test_print_btn, 5, 0, 1, 3)
-        
-        # Информация о формате
-        info_label = QtWidgets.QLabel(
-            "Для Честного знака используйте GS1 DataMatrix с FNC1 в начале и GS разделителями"
-        )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: blue; font-style: italic;")
-        printer_layout.addWidget(info_label, 6, 0, 1, 3)
+        self.test_print_btn = QtWidgets.QPushButton("Тест печати")
+        self.test_print_btn.clicked.connect(self.test_print)
+        printer_layout.addWidget(self.test_print_btn, 3, 0, 1, 3)
         
         printer_group.setLayout(printer_layout)
         
@@ -139,7 +119,7 @@ class PrinterApp(QtWidgets.QMainWindow):
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS print_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dm_content TEXT UNIQUE,
+                dm_content TEXT,
                 printer_name TEXT,
                 print_date TIMESTAMP,
                 print_success BOOLEAN
@@ -150,16 +130,12 @@ class PrinterApp(QtWidgets.QMainWindow):
     def load_settings(self):
         """Загрузка сохраненных настроек"""
         self.dm_size_spin.setValue(self.settings.value("dm_size", 30, type=int))
-        self.quiet_zone_spin.setValue(self.settings.value("quiet_zone", 2, type=int))
-        self.add_fnc1_cb.setChecked(self.settings.value("add_fnc1", False, type=bool))  # Отключаем FNC1
-        self.auto_gs_cb.setChecked(self.settings.value("auto_gs", False, type=bool))   # Отключаем GS разделители
+        self.quiet_zone_spin.setValue(self.settings.value("quiet_zone", 3, type=int))
     
     def save_settings(self):
         """Сохранение настроек"""
         self.settings.setValue("dm_size", self.dm_size_spin.value())
         self.settings.setValue("quiet_zone", self.quiet_zone_spin.value())
-        self.settings.setValue("add_fnc1", self.add_fnc1_cb.isChecked())
-        self.settings.setValue("auto_gs", self.auto_gs_cb.isChecked())
     
     def on_printer_changed(self, index):
         """Обработчик изменения выбора принтера"""
@@ -167,10 +143,9 @@ class PrinterApp(QtWidgets.QMainWindow):
             printer_name = self.printer_combo.itemText(index)
             self.log_text.append(f"Выбран принтер: {printer_name}")
     
-    def test_print_gs1(self):
-        """Тестовая печать для GS1 DataMatrix"""
-        # Тестовые данные в формате Честного знака
-        test_data = "010461414111072521pNxU640aZ4Kk"  # Пример данных
+    def test_print(self):
+        """Тестовая печать"""
+        test_data = "010461414111072521pNxU640aZ4Kk"
         self.process_dm_code(test_data, is_test=True)
     
     def on_text_changed(self, text):
@@ -178,17 +153,11 @@ class PrinterApp(QtWidgets.QMainWindow):
         current_data = text.strip()
         if current_data:
             self.current_scanned_data = current_data
-            self.log_text.append(f"[DEBUG] Данные получены: {current_data}")  # Лог
-            self.print_timer.start(200)
-            self.log_text.append("[DEBUG] Таймер печати запущен")  # Лог
-
+            self.print_timer.start(500)
     
     def auto_print_dm_code(self):
         """Автоматическая печать после сканирования"""
-        self.log_text.append("[DEBUG] Таймер сработал, запуск auto_print_dm_code")
         if self.current_scanned_data:
-            self.log_text.append(f"[DEBUG] Печатаются данные: {self.current_scanned_data}")
-            self.log_text.append(f"[DEBUG] Настройки: FNC1={self.add_fnc1_cb.isChecked()}, GS={self.auto_gs_cb.isChecked()}")  # Добавляем логирование настроек
             self.process_dm_code(self.current_scanned_data)
             self.current_scanned_data = ""
             self.text_input.clear()
@@ -211,48 +180,30 @@ class PrinterApp(QtWidgets.QMainWindow):
         except Exception as e:
             self.log_text.append(f"Ошибка поиска принтеров: {str(e)}")
     
-    def format_gs1_data(self, data):
-        """Правильное форматирование данных для GS1 DataMatrix"""
+    def generate_data_matrix(self, data, size_mm=30, quiet_zone=3):
+        """Простая генерация DataMatrix"""
         try:
-            # Для Честного знака используем raw данные
-            # FNC1 будет обработан правильно при кодировании
-            return data.encode('utf-8')
-        except Exception as e:
-            self.log_text.append(f"Ошибка форматирования: {str(e)}")
-            return data.encode('utf-8')
-        
-    def generate_gs1_data_matrix(self, data, size_mm=25, quiet_zone=3):
-        """Упрощенная генерация DataMatrix без сложных преобразований"""
-        try:
-            # Просто кодируем данные как есть
+            # Кодируем данные
             encoded = encode(data.encode('utf-8'))
             
-            # Создаем изображение напрямую из encoded data
-            img = Image.new('L', (encoded.width, encoded.height), 255)  # Белый фон
+            # Создаем изображение из encoded data
+            img = Image.frombytes('L', (encoded.width, encoded.height), encoded.pixels)
             
-            # Копируем пиксели
-            pixels = encoded.pixels
-            for i in range(0, len(pixels), 3):
-                x = (i // 3) % encoded.width
-                y = (i // 3) // encoded.width
-                brightness = pixels[i]  # Берем только R канал
-                img.putpixel((x, y), brightness)
-            
-            # Конвертируем в чисто черно-белое
+            # Конвертируем в черно-белое
             img = img.convert('1')
             
             # Добавляем тихую зону
-            quiet_zone_px = int(quiet_zone * 3.78)
+            quiet_zone_px = int(quiet_zone * 3.78)  # 3.78 пикселя на мм
             if quiet_zone_px > 0:
                 new_width = img.width + quiet_zone_px * 2
                 new_height = img.height + quiet_zone_px * 2
-                new_img = Image.new('1', (new_width, new_height), 1)  # Белый фон
+                new_img = Image.new('1', (new_width, new_height), 1)
                 new_img.paste(img, (quiet_zone_px, quiet_zone_px))
                 img = new_img
             
-            # Масштабируем
+            # Масштабируем до нужного размера
             target_size_px = int(size_mm * 3.78)
-            img = img.resize((target_size_px, target_size_px), Image.Resampling.NEAREST)
+            img = img.resize((target_size_px, target_size_px), Image.NEAREST)
             
             return img
             
@@ -261,7 +212,7 @@ class PrinterApp(QtWidgets.QMainWindow):
             return None
     
     def process_dm_code(self, data, is_test=False):
-        """Обработка DataMatrix - исправленная версия"""
+        """Обработка DataMatrix"""
         if not data:
             return False
         
@@ -271,18 +222,14 @@ class PrinterApp(QtWidgets.QMainWindow):
         
         printer_name = self.printer_combo.currentText()
         
-        # Временное отключение GS разделителей для автоматической печати
-        original_auto_gs = self.auto_gs_cb.isChecked()
-        if not is_test:  # Для автоматической печати отключаем GS разделители
-            self.auto_gs_cb.setChecked(False)
-        
         try:
             # Генерируем DataMatrix
             dm_size = self.dm_size_spin.value()
             quiet_zone = self.quiet_zone_spin.value()
-            dm_image = self.generate_gs1_data_matrix(data, dm_size, quiet_zone)
+            dm_image = self.generate_data_matrix(data, dm_size, quiet_zone)
             
             if not dm_image:
+                self.status_label.setText("Ошибка генерации кода!")
                 return False
             
             # Печатаем
@@ -298,7 +245,7 @@ class PrinterApp(QtWidgets.QMainWindow):
             if success:
                 status_text = "Тестовая печать успешна!" if is_test else "Успешно напечатано!"
                 self.status_label.setText(status_text)
-                self.log_text.append(f"{status_text}: {data[:20]}...")
+                self.log_text.append(f"{status_text}: {data}")
             else:
                 self.status_label.setText("Ошибка печати!")
             
@@ -308,21 +255,19 @@ class PrinterApp(QtWidgets.QMainWindow):
             self.status_label.setText("Ошибка печати!")
             self.log_text.append(f"Ошибка: {str(e)}")
             return False
-        finally:
-            # Восстанавливаем оригинальные настройки
-            if not is_test:
-                self.auto_gs_cb.setChecked(original_auto_gs)
     
     def print_image(self, image, printer_name):
-        """Упрощенная печать"""
+        """Простая печать изображения"""
         try:
+            # Сохраняем временно как BMP
             with tempfile.NamedTemporaryFile(suffix='.bmp', delete=False) as temp_file:
                 temp_file_path = temp_file.name
 
-            # ✅ Конвертируем в RGB перед сохранением
+            # Конвертируем в RGB и сохраняем
             rgb_image = image.convert('RGB')
             rgb_image.save(temp_file_path, 'BMP')
 
+            # Печатаем
             hprinter = win32print.OpenPrinter(printer_name)
             try:
                 printer_dc = win32ui.CreateDC()
@@ -334,12 +279,15 @@ class PrinterApp(QtWidgets.QMainWindow):
                 bmp = Image.open(temp_file_path)
                 dib = ImageWin.Dib(bmp)
 
+                # Получаем размеры области печати
                 printable_width = printer_dc.GetDeviceCaps(win32con.HORZRES)
                 printable_height = printer_dc.GetDeviceCaps(win32con.VERTRES)
 
+                # Центрируем изображение
                 x = (printable_width - bmp.width) // 2
                 y = (printable_height - bmp.height) // 2
 
+                # Печатаем
                 dib.draw(printer_dc.GetHandleOutput(),
                         (x, y, x + bmp.width, y + bmp.height))
 
@@ -354,13 +302,13 @@ class PrinterApp(QtWidgets.QMainWindow):
             self.log_text.append(f"Ошибка печати: {str(e)}")
             return False
         finally:
+            # Удаляем временный файл
             if os.path.exists(temp_file_path):
                 try:
                     os.unlink(temp_file_path)
                 except:
                     pass
 
-    
     def closeEvent(self, event):
         self.conn.close()
         self.save_settings()
